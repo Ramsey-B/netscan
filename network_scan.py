@@ -1,4 +1,4 @@
-from scapy.all import ARP, Ether, srp, sniff, IP
+from scapy.all import ARP, Ether, srp, sniff, IP, TCP, sr1
 import netifaces
 import ipaddress
 import json
@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 import threading
 import time
+import nmap  # You'll need to: pip install python-nmap
 
 def get_local_network():
     # Get the default gateway
@@ -23,6 +24,40 @@ def get_local_network():
     ip_network = ipaddress.IPv4Network(f'{ip_address}/{netmask}', strict=False)
     return str(ip_network)
 
+def scan_ports(ip, ports=None):
+    if ports is None:
+        ports = [20, 21, 22, 23, 25, 53, 80, 443, 445, 3306, 3389, 8080]  # Common ports
+    
+    nm = nmap.PortScanner()
+    # Arguments: -sV for service/version detection, -O for OS detection
+    # Note: OS detection requires root privileges
+    nm.scan(ip, arguments=f'-sV -O -p{",".join(map(str, ports))}')
+    
+    try:
+        host_info = {
+            'ports': [],
+            'os': nm[ip].get('osmatch', [{'name': 'Unknown'}])[0]['name'],
+            'vendor': nm[ip].get('vendor', {}).get(nm[ip]['addresses'].get('mac', ''), 'Unknown')
+        }
+        
+        for port in nm[ip].all_tcp():
+            port_info = nm[ip]['tcp'][port]
+            host_info['ports'].append({
+                'port': port,
+                'state': port_info['state'],
+                'service': port_info['name'],
+                'version': port_info['version']
+            })
+        
+        return host_info
+    except Exception as e:
+        return {
+            'ports': [],
+            'os': 'Unknown',
+            'vendor': 'Unknown',
+            'error': str(e)
+        }
+
 def scan_network(ip_range):
     # Create an ARP request packet
     arp = ARP(pdst=ip_range)
@@ -32,10 +67,18 @@ def scan_network(ip_range):
     # Send the packet and get the response
     result = srp(packet, timeout=2, verbose=False)[0]
 
-    # Parse the result and extract IP addresses
+    # Parse the result and extract information
     hosts = []
     for sent, received in result:
-        hosts.append({'ip': received.psrc, 'mac': received.hwsrc})
+        host = {
+            'ip': received.psrc,
+            'mac': received.hwsrc,
+        }
+        # Get additional information about the host
+        print(f"Scanning details for {host['ip']}...")
+        host_details = scan_ports(host['ip'])
+        host.update(host_details)
+        hosts.append(host)
     return hosts
 
 def write_to_json(hosts, filename='network_hosts.json'):
@@ -88,10 +131,16 @@ def main():
     print(f"Scanning network: {ip_range}")
     hosts = scan_network(ip_range)
     
-    print("Available devices in the network:")
-    print("IP" + " "*18+"MAC")
+    print("\nAvailable devices in the network:")
+    print("-" * 80)
     for host in hosts:
-        print("{:16}    {}".format(host['ip'], host['mac']))
+        print(f"\nIP: {host['ip']}")
+        print(f"MAC: {host['mac']}")
+        print(f"Vendor: {host['vendor']}")
+        print(f"OS: {host['os']}")
+        print("Open ports:")
+        for port in host['ports']:
+            print(f"  {port['port']}/tcp - {port['state']} - {port['service']} {port['version']}")
     
     write_to_json(hosts)
 
