@@ -6,8 +6,9 @@ from collections import defaultdict
 from datetime import datetime
 import threading
 import time
-import nmap  # You'll need to: pip install python-nmap
+import nmap
 
+## Gets the local network range.
 def get_local_network():
     # Get the default gateway
     gws = netifaces.gateways()
@@ -58,45 +59,46 @@ def scan_ports(ip, ports=None):
             'error': str(e)
         }
 
+## Creates an ARP request packet and sends it to the network.
 def scan_network(ip_range):
     # Create an ARP request packet
     arp = ARP(pdst=ip_range)
     ether = Ether(dst="ff:ff:ff:ff:ff:ff")
     packet = ether/arp
 
-    # Send the packet and get the response
     result = srp(packet, timeout=2, verbose=False)[0]
 
-    # Parse the result and extract information
     hosts = []
     for sent, received in result:
         host = {
             'ip': received.psrc,
             'mac': received.hwsrc,
         }
-        # Get additional information about the host
+
         print(f"Scanning details for {host['ip']}...")
         host_details = scan_ports(host['ip'])
         host.update(host_details)
         hosts.append(host)
     return hosts
 
+## Writes the hosts information to a JSON file.
 def write_to_json(hosts, filename='network_hosts.json'):
     with open(filename, 'w') as file:
         json.dump(hosts, file, indent=4)
     print(f"Hosts information written to {filename}")
 
+## Monitors network traffic and updates the connection counter.
 class NetworkMonitor:
     def __init__(self):
         self.connections = defaultdict(lambda: defaultdict(int))
         self.is_monitoring = False
         self.monitor_thread = None
 
+    ## Callback function for when a packet is captured.
     def packet_callback(self, packet):
         if IP in packet:
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
-            # Increment the connection counter
             self.connections[src_ip][dst_ip] += 1
 
     def start_monitoring(self):
